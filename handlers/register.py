@@ -18,8 +18,20 @@ class RegState(StatesGroup):
     location = State()
 
 @router.callback_query(F.data == "start_register")
-async def start_reg(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.answer("Siapa nama panggilanmu? (Maksimal 15 karakter)")
+async def start_reg_tos(callback: types.CallbackQuery, state: FSMContext):
+    text = (
+        "⚠️ **Aturan Komunitas**\n\n"
+        "1. Minimal usia 18 tahun.\n"
+        "2. Dilarang spam/scam/judi online.\n"
+        "3. Hormati sesama pengguna.\n\n"
+        "Apakah kamu setuju dengan aturan ini?"
+    )
+    kb = [[types.InlineKeyboardButton(text="✅ Setuju & Lanjut", callback_data="tos_agree")]]
+    await callback.message.edit_text(text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data == "tos_agree")
+async def tos_agreed(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer("Bagus! Siapa nama panggilanmu?")
     await state.set_state(RegState.name)
 
 @router.message(RegState.name)
