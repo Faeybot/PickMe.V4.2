@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.future import select
 from datetime import datetime
+import ssl
 
 Base = declarative_base()
 
@@ -26,16 +27,24 @@ class User(Base):
 
 class DatabaseService:
     def __init__(self, db_url):
-        # Perbaikan URL untuk Asyncpg
+        # 1. Pastikan skema benar
         if db_url.startswith("postgresql://"):
             db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
         
-        # Penanganan SSL otomatis untuk Railway
-        if "sslmode" not in db_url:
-            db_url += "?sslmode=prefer"
+        # 2. Hapus parameter sslmode dari string URL agar tidak TypeError
+        if "?sslmode=" in db_url:
+            db_url = db_url.split("?sslmode=")[0]
+        elif "&sslmode=" in db_url:
+            db_url = db_url.split("&sslmode=")[0]
 
-        # Engine versi stabil (Tanpa parameter yang bikin TypeError)
-        self.engine = create_async_engine(db_url)
+        # 3. Buat Engine dengan cara yang disukai Railway & Asyncpg
+        self.engine = create_async_engine(
+            db_url,
+            echo=False,
+            connect_args={
+                "ssl": False  # Railway Internal biasanya tidak butuh SSL tambahan di level driver
+            }
+        )
         self.async_session = sessionmaker(
             self.engine, 
             expire_on_commit=False, 
@@ -53,7 +62,6 @@ class DatabaseService:
 
     async def register_full_user(self, user_id, **kwargs):
         async with self.async_session() as session:
-            # Menggunakan merge agar tidak bentrok saat re-register
             user = User(id=user_id, **kwargs)
             await session.merge(user)
             await session.commit()
@@ -88,4 +96,4 @@ class DatabaseService:
                 query = query.where(User.gender == interest)
             result = await session.execute(query.order_by(func.random()).limit(1))
             return result.scalar_one_or_none()
-            
+    
