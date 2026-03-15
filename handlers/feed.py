@@ -1,87 +1,89 @@
+import os
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from services.database import DatabaseService
 from utils.filters import is_clean_text
-import os
-from datetime import datetime
 
 router = Router()
 
 class FeedState(StatesGroup):
-    choosing_type = State()
     input_content = State()
     anon_toggle = State()
 
 @router.callback_query(F.data == "menu_feed")
-async def start_feed(callback: types.CallbackQuery, state: FSMContext, db: DatabaseService):
+async def start_feed(callback: types.CallbackQuery, db: DatabaseService, state: FSMContext):
     user = await db.get_user(callback.from_user.id)
     
-    # CEK KUOTA (Hanya untuk non-premium)
+    # CEK KUOTA HARIAN (3 Teks, 1 Foto untuk Non-Premium)
     if not user.is_premium:
-        if user.text_posts_today >= 3 and user.photo_posts_today >= 1:
-            return await callback.message.answer("⚠️ Kuota harianmu habis! (3 Teks, 1 Foto).\n\n✨ Upgrade Premium untuk unlimited post!")
+        if user.text_posts_today >= 3:
+            return await callback.message.answer("⚠️ Kuota posting TEKS kamu hari ini sudah habis (Maks 3).\n\n✨ Upgrade Premium untuk unlimited post!")
+        if user.photo_posts_today >= 1:
+            return await callback.message.answer("⚠️ Kuota posting FOTO kamu hari ini sudah habis (Maks 1).\n\n✨ Upgrade Premium untuk unlimited post!")
 
     kb = [
-        [types.InlineKeyboardButton(text="📝 Post Teks", callback_data="feed_text")],
-        [types.InlineKeyboardButton(text="📸 Post Foto", callback_data="feed_photo")]
+        [types.InlineKeyboardButton(text="📝 Kirim Postingan (Teks/Foto)", callback_data="feed_input")]
     ]
-    await callback.message.edit_text("Pilih jenis postingan:", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.message.edit_text(
+        "Silakan kirim teks atau foto yang ingin kamu posting ke channel.\n\n"
+        "Sisa kuota kamu:\n"
+        f"📝 Teks: {3 - user.text_posts_today}/3\n"
+        f"📸 Foto: {1 - user.photo_posts_today}/1",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb)
+    )
     await state.set_state(FeedState.input_content)
 
 @router.message(FeedState.input_content)
-async def process_feed_content(message: types.Message, state: FSMContext, db: DatabaseService):
+async def process_content(message: types.Message, state: FSMContext):
     content = message.text or message.caption
     
-    # 1. FILTER KATA KASAR
-    if not is_clean_text(content):
-        return await message.answer("❌ Pesanmu mengandung kata terlarang. Yuk, pakai bahasa yang sopan!")
+    # Validasi Teks (Sensor)
+    if content and not is_clean_text(content):
+        return await message.answer("❌ Maaf, postinganmu mengandung kata-kata yang dilarang. Silakan ketik ulang dengan bahasa yang sopan.")
 
-    await state.update_data(content=content, photo_id=message.photo[-1].file_id if message.photo else None)
+    photo_id = message.photo[-1].file_id if message.photo else None
+    await state.update_data(content=content, photo_id=photo_id)
     
-    # 2. TANYA PRIVASI
+    # Opsi Privasi
     kb = [
-        [types.InlineKeyboardButton(text="🔓 Tampilkan Profil", callback_data="priv_public")],
-        [types.InlineKeyboardButton(text="🔒 Anonim", callback_data="priv_anon")]
+        [types.InlineKeyboardButton(text="🔓 Tampilkan Profil", callback_data="p_public"),
+         types.InlineKeyboardButton(text="🔒 Anonim (Sembunyikan)", callback_data="p_anon")]
     ]
-    await message.answer("Apakah ingin menampilkan profil kamu di postingan ini?", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb))
+    await message.answer("Apakah kamu ingin orang lain bisa melihat profilmu melalui postingan ini?", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb))
     await state.set_state(FeedState.anon_toggle)
 
-@router.callback_query(F.data.startswith("priv_"), FeedState.anon_toggle)
-async def finalize_feed(callback: types.CallbackQuery, state: FSMContext, db: DatabaseService):
-    user_data = await state.get_data()
+@router.callback_query(FeedState.anon_toggle, F.data.startswith("p_"))
+async def finalize_post(callback: types.CallbackQuery, state: FSMContext, db: DatabaseService):
+    data = await state.get_data()
     user = await db.get_user(callback.from_user.id)
-    is_anon = callback.data == "priv_anon"
+    is_anon = callback.data == "p_anon"
     
-    # FORMAT POSTINGAN
-    gender_icon = "👨" if user.gender == "Pria" else "👩"
-    post_text = (
-        f"{gender_icon} **{user.full_name}** | 📍 {user.location_name}\n\n"
-        f"📝 {user_data['content']}\n\n"
-        f"{user.city_hashtag} #{user.gender} #PickMeFeed"
-    )
+    # Format Tampilan
+    icon = "👨" if user.gender == "Pria" else "👩"
+    header = f"{icon} **{user.full_name}** | 📍 {user.location_name}"
+    body = f"\n\n📝 {data['content']}" if data['content'] else ""
+    tags = f"\n\n{user.city_hashtag} #{user.gender} #PickMeFeed"
     
-    # JALUR POSTING
-    FEED_CHANNEL_ID = os.getenv("FEED_CHANNEL_ID")
+    full_post = f"{header}{body}{tags}"
     
-    if user_data['photo_id']:
-        # FOTO: Kirim ke Admin dulu (Moderasi)
-        ADMIN_GROUP_ID = os.getenv("ADMIN_GROUP_ID")
-        kb = [[types.InlineKeyboardButton(text="✅ Approve", callback_data=f"app_{user.id}"),
-               types.InlineKeyboardButton(text="❌ Reject", callback_data=f"rej_{user.id}")]]
-        await callback.bot.send_photo(ADMIN_GROUP_ID, user_data['photo_id'], caption=f"MODERASI FOTO\n\n{post_text}", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb))
-        await callback.message.answer("📸 Foto terkirim ke admin untuk diperiksa!")
+    # Tombol Lihat Profil (Hanya jika tidak anonim)
+    kb_list = []
+    if not is_anon:
+        bot_user = os.getenv("BOT_USERNAME")
+        kb_list.append([types.InlineKeyboardButton(text="👤 Lihat Profil", url=f"https://t.me/{bot_user}?start=view_{user.id}")])
+    
+    markup = types.InlineKeyboardMarkup(inline_keyboard=kb_list)
+    channel_id = os.getenv("FEED_CHANNEL_ID")
+
+    # Eksekusi Posting
+    if data['photo_id']:
+        await callback.bot.send_photo(channel_id, data['photo_id'], caption=full_post, reply_markup=markup)
+        await db.increment_quota(user.id, "photo")
     else:
-        # TEKS: Langsung ke Channel
-        kb = []
-        if not is_anon:
-            kb.append([types.InlineKeyboardButton(text="👤 Lihat Profil", url=f"https://t.me/{os.getenv('BOT_USERNAME')}?start=view_{user.id}")])
-        
-        await callback.bot.send_message(FEED_CHANNEL_ID, post_text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb))
-        await callback.message.answer("🚀 Postingan teks kamu sudah terbit di channel!")
-        
-        # UPDATE KUOTA
+        await callback.bot.send_message(channel_id, full_post, reply_markup=markup)
         await db.increment_quota(user.id, "text")
 
+    await callback.message.answer("🚀 Berhasil! Postingan kamu sudah terbit di channel.")
     await state.clear()
-  
+    
