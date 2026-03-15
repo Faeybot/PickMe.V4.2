@@ -7,15 +7,18 @@ from utils.geocoder import get_city_name, create_hashtag
 
 router = Router()
 
+# Daftar Minat untuk Multi-Select
+INTEREST_OPTIONS = ["Musik", "Olahraga", "Travel", "Kuliner", "Game", "Film", "Adult"]
+
 class RegState(StatesGroup):
     name = State()
     age = State()
     gender = State()
-    interest = State()
-    looking_for = State()
+    interest = State()    # Multi-pilih minat
+    looking_for = State() # Mencari Pria/Wanita/Keduanya
     bio = State()
-    photo = State()
     location = State()
+    photo = State()
 
 @router.callback_query(F.data == "start_register")
 async def start_reg_tos(callback: types.CallbackQuery, state: FSMContext):
@@ -30,109 +33,151 @@ async def start_reg_tos(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb))
 
 @router.callback_query(F.data == "tos_agree")
-async def tos_agreed(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.answer("Bagus! Siapa nama panggilanmu?")
+async def start_name(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("Bagus! Siapa nama panggilanmu?")
     await state.set_state(RegState.name)
 
 @router.message(RegState.name)
-async def reg_name(message: types.Message, state: FSMContext):
-    await state.update_data(name=message.text[:15])
-    await message.answer("Berapa usiamu? (Angka saja, contoh: 20)")
+async def process_name(message: types.Message, state: FSMContext):
+    await state.update_data(name=message.text)
+    await message.answer(f"Salam kenal, {message.text}! Berapa usiamu? (Hanya angka)")
     await state.set_state(RegState.age)
 
 @router.message(RegState.age)
-async def reg_age(message: types.Message, state: FSMContext):
+async def process_age(message: types.Message, state: FSMContext):
     if not message.text.isdigit():
-        return await message.answer("Tolong masukkan angka saja!")
-    await state.update_data(age=int(message.text))
+        return await message.answer("Tolong masukkan angka saja ya.")
     
-    kb = [[types.InlineKeyboardButton(text="Pria 👨", callback_data="g_Pria"),
-           types.InlineKeyboardButton(text="Wanita 👩", callback_data="g_Wanita")]]
-    await message.answer("Pilih Gendermu:", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb))
+    age = int(message.text)
+    if age < 18:
+        return await message.answer("Maaf, kamu harus berusia minimal 18 tahun.")
+    
+    await state.update_data(age=age)
+    kb = [
+        [types.InlineKeyboardButton(text="👨 Pria", callback_data="gender_pria")],
+        [types.InlineKeyboardButton(text="👩 Wanita", callback_data="gender_wanita")]
+    ]
+    await message.answer("Apa jenis kelaminmu?", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb))
     await state.set_state(RegState.gender)
 
-@router.callback_query(RegState.gender, F.data.startswith("g_"))
-async def reg_gender(callback: types.CallbackQuery, state: FSMContext):
-    gender = callback.data.split("_")[1]
+@router.callback_query(RegState.gender)
+async def process_gender(callback: types.CallbackQuery, state: FSMContext):
+    gender = "pria" if "pria" in callback.data else "wanita"
     await state.update_data(gender=gender)
+    await state.update_data(selected_interests=[]) # Inisialisasi list minat
     
-    # 7 Pilihan Minat (Adult)
-    minat_options = ["Kenalan", "Kencan", "Love", "Ngopi", "Flirting", "DirtyTalk", "FWB"]
-    kb = [[types.InlineKeyboardButton(text=m, callback_data=f"i_{m}")] for m in minat_options]
-    
-    await callback.message.edit_text("Apa minatmu saat ini?", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb))
+    # Tampilkan Menu Minat (Multi-Select)
+    await show_interest_keyboard(callback.message, [])
     await state.set_state(RegState.interest)
 
-@router.callback_query(RegState.interest, F.data.startswith("i_"))
-async def reg_interest(callback: types.CallbackQuery, state: FSMContext):
-    interest = callback.data.split("_")[1]
-    await state.update_data(interest=interest)
-    await callback.message.answer("Kamu sedang tertarik mencari siapa/kriteria seperti apa?")
-    await state.set_state(RegState.looking_for)
+async def show_interest_keyboard(message: types.Message, selected_list: list):
+    buttons = []
+    for opt in INTEREST_OPTIONS:
+        text = f"✅ {opt}" if opt in selected_list else opt
+        buttons.append([types.InlineKeyboardButton(text=text, callback_data=f"opt_{opt}")])
+    
+    buttons.append([types.InlineKeyboardButton(text="➡️ SELESAI", callback_data="done_interest")])
+    text = "Pilih satu atau beberapa minatmu, lalu tekan Selesai:"
+    
+    await message.edit_text(text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
 
-@router.message(RegState.looking_for)
-async def reg_looking(message: types.Message, state: FSMContext):
-    await state.update_data(looking_for=message.text)
-    await message.answer("Tuliskan sedikit tentang dirimu (About Me):")
+@router.callback_query(RegState.interest)
+async def process_interest_selection(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    selected = data.get("selected_interests", [])
+    
+    if callback.data.startswith("opt_"):
+        choice = callback.data.replace("opt_", "")
+        if choice in selected:
+            selected.remove(choice)
+        else:
+            selected.append(choice)
+        
+        await state.update_data(selected_interests=selected)
+        await show_interest_keyboard(callback.message, selected)
+        
+    elif callback.data == "done_interest":
+        if not selected:
+            return await callback.answer("Pilih minimal satu minat!", show_alert=True)
+        
+        await state.update_data(interest=", ".join(selected))
+        
+        # Pindah ke Kriteria Pencarian (UPDATE: Pria/Wanita/Keduanya)
+        kb = [
+            [types.InlineKeyboardButton(text="👨 Pria", callback_data="look_pria")],
+            [types.InlineKeyboardButton(text="👩 Wanita", callback_data="look_wanita")],
+            [types.InlineKeyboardButton(text="🌈 Keduanya", callback_data="look_keduanya")]
+        ]
+        await callback.message.edit_text("Kamu sedang mencari siapa?", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb))
+        await state.set_state(RegState.looking_for)
+
+@router.callback_query(RegState.looking_for)
+async def process_looking_for(callback: types.CallbackQuery, state: FSMContext):
+    choice = callback.data.replace("look_", "")
+    await state.update_data(looking_for=choice)
+    await callback.message.edit_text("Tuliskan bio singkat tentang dirimu (hobi, kriteria, atau sapaan):")
     await state.set_state(RegState.bio)
 
 @router.message(RegState.bio)
-async def reg_bio(message: types.Message, state: FSMContext):
+async def process_bio(message: types.Message, state: FSMContext):
     await state.update_data(bio=message.text)
-    await message.answer("Sekarang, kirimkan satu foto profil terbaikmu:")
-    await state.set_state(RegState.photo)
-
-@router.message(RegState.photo, F.photo)
-async def reg_photo(message: types.Message, state: FSMContext):
-    await state.update_data(photo_id=message.photo[-1].file_id)
     kb = [[types.KeyboardButton(text="📍 Kirim Lokasi", request_location=True)]]
-    await message.answer("Terakhir, kirimkan lokasimu agar kami bisa mencocokkan profil terdekat:", 
-                         reply_markup=types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True))
+    await message.answer("Terakhir, bagikan lokasimu agar bisa menemukan orang terdekat:", 
+                         reply_markup=types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True))
     await state.set_state(RegState.location)
 
 @router.message(RegState.location, F.location)
-async def reg_final(message: types.Message, state: FSMContext, db: DatabaseService):
-    data = await state.get_data()
-    city = get_city_name(message.location.latitude, message.location.longitude)
-    hashtag = create_hashtag(city)
+async def process_location(message: types.Message, state: FSMContext):
+    lat = message.location.latitude
+    lon = message.location.longitude
     
-    # Simpan ke Postgres
+    # Geocoding
+    city_name = get_city_name(lat, lon)
+    city_tag = create_hashtag(city_name)
+    
+    await state.update_data(lat=lat, lon=lon, loc_name=city_name, city_tag=city_tag)
+    await message.answer("Terima kasih! Sekarang kirimkan foto profil terbaikmu:", 
+                         reply_markup=types.ReplyKeyboardRemove())
+    await state.set_state(RegState.photo)
+
+@router.message(RegState.photo, F.photo)
+async def process_photo_final(message: types.Message, state: FSMContext, db: DatabaseService):
+    photo_id = message.photo[-1].file_id
+    data = await state.get_data()
+    
+    # Simpan ke Database (Pastikan db.register_full_user sudah mendukung parameter baru)
     await db.register_full_user(
-        id=message.from_user.id,
-        username=message.from_user.username,
+        user_id=message.from_user.id,
         full_name=data['name'],
-        age=data['age'],
         gender=data['gender'],
+        age=data['age'],
         interest=data['interest'],
         looking_for=data['looking_for'],
         bio=data['bio'],
-        photo_id=data['photo_id'],
-        location_name=city,
-        city_hashtag=hashtag
+        photo_id=photo_id,
+        lat=data['lat'],
+        lon=data['lon'],
+        loc_name=data['loc_name'],
+        city_tag=data['city_tag']
     )
     
     await state.clear()
-    await message.answer("✅ Registrasi Sukses!", reply_markup=types.ReplyKeyboardRemove())
-
-    # --- LOG ADMIN KE CHANNEL ---
-    LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID")
-    admin_kb = [[
-        types.InlineKeyboardButton(text="💬 Chat User", url=f"tg://user?id={message.from_user.id}"),
-        types.InlineKeyboardButton(text="🚫 Ban", callback_data=f"ban_{message.from_user.id}")
-    ]]
     
-    log_text = (
-        f"🔔 **USER BARU**\n"
-        f"👤 {data['name']}, {data['age']} ({data['gender']})\n"
-        f"🔥 Minat: {data['interest']}\n"
-        f"🎯 Mencari: {data['looking_for']}\n"
-        f"📍 Lokasi: {city}\n"
-        f"📝 Bio: {data['bio']}"
+    # --- PREVIEW PROFIL PRIBADI (Fitur yang dikembalikan) ---
+    preview_text = (
+        "✅ **PENDAFTARAN BERHASIL!**\n\n"
+        "Berikut adalah tampilan profilmu:\n"
+        "━━━━━━━━━━━━━━━\n"
+        f"👤 **{data['name']}, {data['age']}**\n"
+        f"📍 {data['loc_name']}\n"
+        f"🔍 Mencari: {data['looking_for'].capitalize()}\n"
+        f"🎨 Minat: {data['interest']}\n\n"
+        f"📝 **Bio:**\n{data['bio']}\n"
+        "━━━━━━━━━━━━━━━\n"
     )
-    await message.bot.send_photo(LOG_CHANNEL_ID, photo=data['photo_id'], caption=log_text, 
-                                 reply_markup=types.InlineKeyboardMarkup(inline_keyboard=admin_kb))
-
-    # Tampilkan Menu Utama (Nanti akan kita buat di start.py)
+    
+    await message.answer_photo(photo=photo_id, caption=preview_text)
+    
+    # Munculkan Menu Utama
     from handlers.start import show_main_menu
     await show_main_menu(message)
-    
