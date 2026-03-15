@@ -2,54 +2,88 @@ import asyncio
 import logging
 import os
 import sys
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from dotenv import load_dotenv
 
-# Fix agar Python bisa membaca folder modul kita
+# Memastikan folder root terbaca oleh Python
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
-# Import layanan kita
+# Import Layanan & Handlers (Menambahkan admin ke daftar import)
 from services.database import DatabaseService
-from handlers import start, register, feed, dating
+from handlers import start, register, feed, dating, admin
 
-# Load variabel dari Railway/Env
+# Load Environment Variables
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 async def main():
-    # Setup Logging
-    logging.basicConfig(level=logging.INFO)
+    # 1. Konfigurasi Logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
+    logger = logging.getLogger(__name__)
 
-    # Inisialisasi Bot dan Database
-    bot = Bot(token=BOT_TOKEN)
+    # 2. Inisialisasi Bot dengan ParseMode HTML
+    bot = Bot(
+        token=BOT_TOKEN, 
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    )
+
+    # 3. Inisialisasi Database Postgres
     db = DatabaseService(DATABASE_URL)
     
-    # Pastikan Tabel Database Terbuat
-    await db.init_db()
+    try:
+        await db.init_db()
+        logger.info("Database Postgres berhasil terhubung dan diinisialisasi.")
+    except Exception as e:
+        logger.error(f"Gagal inisialisasi database: {e}")
+        return
 
-    # Setup Dispatcher & Storage (Memory untuk FSM)
+    # 4. Setup Dispatcher & Storage
     dp = Dispatcher(storage=MemoryStorage())
 
-    # Dependency Injection: Masukkan 'db' ke setiap handler secara otomatis
+    # 5. Dependency Injection
     dp["db"] = db
 
-    # Registrasi Router (Menyambungkan file di folder handlers)
-    dp.include_router(start.router)
+    # 6. Registrasi Routers (URUTAN FINAL & AMAN)
+    # Admin ditaruh paling atas agar perintah ban tidak 'tercuri' oleh router lain
+    dp.include_router(admin.router) 
     dp.include_router(register.router)
+    dp.include_router(start.router)
     dp.include_router(feed.router)
     dp.include_router(dating.router)
 
-    # Mulai Bot (Polling)
-    logging.info("PickMe Bot sedang berjalan...")
+    # --- UPDATE: GLOBAL UNKNOWN HANDLER ---
+    # Menangani pesan yang dikirim user di luar alur menu/registrasi
+    @dp.message()
+    async def global_unknown_handler(message: types.Message):
+        await message.answer(
+            "❓ **Maaf, saya tidak mengerti.**\n\n"
+            "Silakan gunakan tombol menu yang tersedia atau ketik /start untuk kembali ke menu utama."
+        )
+
+    # 7. Start Polling
+    logger.info("PickMe Bot sedang online (v3.0 - MVP Final)!")
+    
+    # Drop_pending_updates=True mencegah spam pesan lama saat bot baru nyala
     await bot.delete_webhook(drop_pending_updates=True)
-    await asyncio.gather(
-        dp.start_polling(bot)
-    )
+    
+    try:
+        await dp.start_polling(bot)
+    except Exception as e:
+        logger.error(f"Bot berhenti karena error: {e}")
+    finally:
+        await bot.session.close()
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logging.info("Bot dimatikan.")
+        logging.info("Bot dimatikan secara manual.")
+    
