@@ -5,63 +5,93 @@ import os
 
 router = Router()
 
-# Ambil data dari Environment Variable
+# Pastikan variabel ini ada di Environment Railway kamu
 FEED_CHANNEL_ID = os.getenv("FEED_CHANNEL_ID")
 PUBLIC_GROUP_ID = os.getenv("PUBLIC_GROUP_ID")
-# Tambahkan dua variabel ini di Railway agar tombol link aktif!
-CH_LINK = os.getenv("CH_LINK") # Contoh isi: PickMeFeed
-GR_LINK = os.getenv("GR_LINK") # Contoh isi: PickMeGroup
+CH_LINK = os.getenv("CH_LINK") # Username channel tanpa @
+GR_LINK = os.getenv("GR_LINK") # Username grup tanpa @
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, db: DatabaseService):
     user_id = message.from_user.id
     
+    # 1. CEK MANDATORY JOIN (Agar bot tidak spammer)
     try:
-        # Cek status member (menggunakan ID angka)
         member_feed = await message.bot.get_chat_member(FEED_CHANNEL_ID, user_id)
         member_group = await message.bot.get_chat_member(PUBLIC_GROUP_ID, user_id)
         
-        # Jika belum join (status: left, kicked, atau restricted jika perlu)
-        if member_feed.status == "left" or member_group.status == "left":
+        if member_feed.status in ["left", "kicked"] or member_group.status in ["left", "kicked"]:
             kb = [
                 [types.InlineKeyboardButton(text="📢 Join Channel Feed", url=f"https://t.me/{CH_LINK}")],
                 [types.InlineKeyboardButton(text="💬 Join Grup Publik", url=f"https://t.me/{GR_LINK}")],
                 [types.InlineKeyboardButton(text="✅ Saya Sudah Join", callback_data="check_join")]
             ]
-            markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
-            return await message.answer("Halo! Untuk menggunakan bot ini, kamu wajib join channel dan grup kami dulu ya.", reply_markup=markup)
+            return await message.answer(
+                "❌ **Akses Ditolak!**\n\nKamu harus bergabung di Channel dan Grup kami terlebih dahulu untuk menggunakan bot ini.",
+                reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb)
+            )
     except Exception as e:
         print(f"Error check member: {e}")
-        # Jika bot belum jadi admin, dia akan error di sini. Kita izinkan lewat dulu agar tidak stuck.
 
-    # CEK USER DI DATABASE
+    # 2. CEK REGISTRASI
     user = await db.get_user(user_id)
     if not user:
         kb = [[types.InlineKeyboardButton(text="📝 Daftar Sekarang", callback_data="start_register")]]
-        await message.answer(
-            "Selamat datang di **PickMe Bot**! 💘\n\nSepertinya kamu belum terdaftar. Yuk, buat profil singkatmu agar bisa mulai mencari teman atau pasangan!",
+        return await message.answer(
+            "👋 **Selamat Datang di PickMe Bot!**\n\nTempat cari teman, kencan, atau sekadar ngopi. Profil kamu belum terdaftar nih. Yuk, buat dulu!",
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb)
         )
-    else:
-        await show_main_menu(message)
+    
+    # 3. TAMPILKAN MENU UTAMA JIKA SUDAH DAFTAR
+    await show_main_menu(message)
 
 @router.callback_query(F.data == "check_join")
 async def check_join_callback(callback: types.CallbackQuery, db: DatabaseService):
-    # Fungsi ini dijalankan saat user klik "Saya Sudah Join"
-    await callback.message.delete() # Hapus pesan lama
+    await callback.message.delete()
     await cmd_start(callback.message, db)
 
 async def show_main_menu(message: types.Message):
+    # Struktur Menu sesuai konsep Antarmuka yang kita bahas
     kb = [
-        [types.InlineKeyboardButton(text="📸 Post Feed", callback_data="menu_feed"),
-         types.InlineKeyboardButton(text="💘 Swipe Dating", callback_data="menu_swipe")],
-        [types.InlineKeyboardButton(text="⚙️ Edit Profil", callback_data="menu_edit"),
-         types.InlineKeyboardButton(text="🔍 Filter", callback_data="menu_filter")]
+        [types.InlineKeyboardButton(text="🔍 Cari Pasangan", callback_data="menu_swipe"),
+         types.InlineKeyboardButton(text="📱 Update Feed", callback_data="menu_feed")],
+        [types.InlineKeyboardButton(text="❤️ Suka Kamu", callback_data="menu_liked_me"),
+         types.InlineKeyboardButton(text="👤 Profil Saya", callback_data="view_my_profile")],
+        [types.InlineKeyboardButton(text="✏️ Edit Profil", callback_data="menu_edit"),
+         types.InlineKeyboardButton(text="⚙️ Pengaturan", callback_data="menu_settings")]
     ]
     markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
-    # Gunakan edit_text jika dipanggil dari callback, atau answer jika dari message
+    
+    text = "🌟 **MENU UTAMA PICKME**\n\nSilakan pilih menu di bawah untuk berinteraksi:"
+    
     if isinstance(message, types.Message):
-        await message.answer("🌟 **Menu Utama PickMe**\nSilakan pilih layanan di bawah ini:", reply_markup=markup)
+        await message.answer(text, reply_markup=markup)
     else:
-        await message.edit_text("🌟 **Menu Utama PickMe**\nSilakan pilih layanan di bawah ini:", reply_markup=markup)
-        
+        # Jika dipanggil dari callback_query (misal klik 'back')
+        await message.edit_text(text, reply_markup=markup)
+
+@router.callback_query(F.data == "view_my_profile")
+async def view_my_profile(callback: types.CallbackQuery, db: DatabaseService):
+    user = await db.get_user(callback.from_user.id)
+    caption = (
+        f"📇 **Profil Kamu**\n\n"
+        f"👤 {user.full_name}, {user.age} thn\n"
+        f"🚻 Gender: {user.gender}\n"
+        f"🔥 Minat: {user.interest}\n"
+        f"🎯 Mencari: {user.looking_for}\n"
+        f"📍 Lokasi: {user.location_name}\n"
+        f"📝 Bio: {user.bio}\n\n"
+        f"📊 **Statistik Hari Ini:**\n"
+        f"💬 Pesan: {user.messages_sent_today}/1\n"
+        f"📱 Feed: {user.text_posts_today + user.photo_posts_today}/4"
+    )
+    kb = [[types.InlineKeyboardButton(text="🔙 Kembali", callback_data="main_menu")]]
+    await callback.message.answer_photo(
+        photo=user.photo_id, 
+        caption=caption, 
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb)
+    )
+
+@router.callback_query(F.data == "main_menu")
+async def back_to_menu(callback: types.CallbackQuery):
+    await show_main_menu(callback.message)
