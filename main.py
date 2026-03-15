@@ -59,17 +59,21 @@ async def main():
     dp.include_router(feed.router)
     dp.include_router(dating.router)
 
-    # --- UPDATE: GLOBAL UNKNOWN HANDLER ---
-    # Menangani pesan yang dikirim user di luar alur menu/registrasi
+    # --- PERBAIKAN DI SINI ---
+    # Tambahkan filter agar Global Handler TIDAK menangkap perintah berawalan '/'
     @dp.message()
     async def global_unknown_handler(message: types.Message):
+        # Jika pesan adalah command (seperti /start) atau dalam proses FSM, biarkan lewat
+        if message.text and message.text.startswith("/"):
+            return
+        
         await message.answer(
-            "❓ **Maaf, saya tidak mengerti.**\n\n"
-            "Silakan gunakan tombol menu yang tersedia atau ketik /start untuk kembali ke menu utama."
+            "❓ **Sorry guys, ini BOT bukan tempat curhat.**\n\n"
+            "Silakan gunakan tombol menu yang tersedia atau klik /start untuk kembali ke menu utama."
         )
 
     # 7. Start Polling
-    logger.info("PickMe Bot sedang online (v3.0 - MVP Final)!")
+    logger.info("PickMe Bot sedang online (v4.2 - MVP Final)!")
     
     # Drop_pending_updates=True mencegah spam pesan lama saat bot baru nyala
     await bot.delete_webhook(drop_pending_updates=True)
