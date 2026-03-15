@@ -11,10 +11,26 @@ PUBLIC_GROUP_ID = os.getenv("PUBLIC_GROUP_ID")
 CH_LINK = os.getenv("CH_LINK") # Username channel tanpa @
 GR_LINK = os.getenv("GR_LINK") # Username grup tanpa @
 
+# Tambahkan di dalam cmd_start (start.py)
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, db: DatabaseService):
     user_id = message.from_user.id
+    args = message.text.split()
     
+    # Fitur Deep Linking: /start view_12345
+    if len(args) > 1 and args[1].startswith("view_"):
+        target_id = int(args[1].replace("view_", ""))
+        target = await db.get_user(target_id)
+        if target:
+            # Cek apakah user sudah daftar sendiri
+            me = await db.get_user(user_id)
+            if not me:
+                return await message.answer("👋 Halo! Daftar dulu yuk untuk bisa berinteraksi dengan profil ini.")
+            
+            # Tampilkan profil target
+            caption = f"👤 **Profil: {target.full_name}**\n📍 {target.location_name}\n\n{target.bio}"
+            return await message.answer_photo(photo=target.photo_id, caption=caption)
+
     # 1. CEK MANDATORY JOIN (Agar bot tidak spammer)
     try:
         member_feed = await message.bot.get_chat_member(FEED_CHANNEL_ID, user_id)
