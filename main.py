@@ -2,26 +2,27 @@ import asyncio
 import logging
 import os
 import sys
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.fsm.context import FSMContext
 from dotenv import load_dotenv
 
-# Memastikan folder root terbaca oleh Python
+# Memastikan Python bisa menemukan folder handlers, services, dan utils
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
-# Import Layanan & Handlers (Menambahkan admin ke daftar import)
+# 1. IMPORT SEMUA HANDLER DAN SERVICE (Sesuai Struktur File Kamu)
 from services.database import DatabaseService
 from handlers import start, register, feed, dating, admin
 
-# Load Environment Variables
+# Load Environment Variables dari Railway / .env
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 async def main():
-    # 1. Konfigurasi Logging
+    # 2. KONFIGURASI LOGGING (Agar kamu bisa pantau error di Railway)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -29,65 +30,71 @@ async def main():
     )
     logger = logging.getLogger(__name__)
 
-    # 2. Inisialisasi Bot dengan ParseMode HTML
+    # 3. INISIALISASI BOT
+    # Menggunakan DefaultBotProperties agar semua pesan otomatis support HTML
     bot = Bot(
         token=BOT_TOKEN, 
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
 
-    # 3. Inisialisasi Database Postgres
+    # 4. INISIALISASI DATABASE POSTGRES
     db = DatabaseService(DATABASE_URL)
-    
     try:
         await db.init_db()
-        logger.info("Database Postgres berhasil terhubung dan diinisialisasi.")
+        logger.info("✅ Database Postgres berhasil terhubung dan tabel telah siap.")
     except Exception as e:
-        logger.error(f"Gagal inisialisasi database: {e}")
+        logger.error(f"❌ Gagal inisialisasi database: {e}")
         return
 
-    # 4. Setup Dispatcher & Storage
+    # 5. SETUP DISPATCHER & STORAGE (MemoryStorage untuk FSM/Pendaftaran)
     dp = Dispatcher(storage=MemoryStorage())
 
-    # 5. Dependency Injection
+    # 6. DEPENDENCY INJECTION
+    # Memasukkan objek 'db' agar bisa digunakan langsung di semua file handler
     dp["db"] = db
 
-    # 6. Registrasi Routers (URUTAN FINAL & AMAN)
-    # Admin ditaruh paling atas agar perintah ban tidak 'tercuri' oleh router lain
-    dp.include_router(admin.router) 
-    dp.include_router(register.router)
-    dp.include_router(start.router)
-    dp.include_router(feed.router)
-    dp.include_router(dating.router)
+    # 7. REGISTRASI SEMUA ROUTER (URUTAN SANGAT KRUSIAL)
+    # Kita urutkan agar fitur prioritas seperti Admin dan Register tidak tertutup Menu Utama
+    dp.include_router(admin.router)    # Handler untuk Ban/Stats (Admin Only)
+    dp.include_router(register.router) # Handler untuk Alur Pendaftaran
+    dp.include_router(start.router)    # Handler untuk /start dan Menu Utama
+    dp.include_router(feed.router)     # Handler untuk Posting ke Channel
+    dp.include_router(dating.router)   # Handler untuk Swipe dan Pesan Instan
 
-    # --- PERBAIKAN DI SINI ---
-    # Tambahkan filter agar Global Handler TIDAK menangkap perintah berawalan '/'
-    @dp.message()
-    async def global_unknown_handler(message: types.Message):
-        # Jika pesan adalah command (seperti /start) atau dalam proses FSM, biarkan lewat
-        if message.text and message.text.startswith("/"):
+    # 8. GLOBAL UNKNOWN HANDLER (Jaring Pengaman)
+    # Ini menangkap pesan teks yang bukan command dan user tidak sedang mengisi data
+    @dp.message(F.text, ~F.text.startswith("/"))
+    async def global_unknown_handler(message: types.Message, state: FSMContext):
+        # Cek apakah user sedang dalam proses FSM (sedang daftar/isi feed)
+        current_state = await state.get_state()
+        if current_state is not None:
+            # Jika user sedang dalam proses input, biarkan router yang bersangkutan bekerja
             return
         
+        # Jika benar-benar pesan random di luar menu, beri tahu user
         await message.answer(
-            "❓ **Sorry guys, ini BOT bukan tempat curhat.**\n\n"
-            "Silakan gunakan tombol menu yang tersedia atau klik /start untuk kembali ke menu utama."
+            "❓ **Maaf, saya tidak mengerti.**\n\n"
+            "Silakan gunakan tombol menu yang tersedia atau ketik /start untuk kembali ke menu utama."
         )
 
-    # 7. Start Polling
-    logger.info("PickMe Bot sedang online (v4.2 - MVP Final)!")
+    # 9. START POLLING
+    logger.info("🚀 PickMe Bot v3.0 (Full MVP) is Online!")
     
-    # Drop_pending_updates=True mencegah spam pesan lama saat bot baru nyala
+    # Hapus webhook lama dan abaikan pesan tertunda saat bot sedang mati (mencegah spam)
     await bot.delete_webhook(drop_pending_updates=True)
     
     try:
+        # Jalankan bot
         await dp.start_polling(bot)
     except Exception as e:
-        logger.error(f"Bot berhenti karena error: {e}")
+        logger.error(f"❌ Terjadi kesalahan saat bot berjalan: {e}")
     finally:
+        # Tutup sesi bot dengan aman saat dimatikan
         await bot.session.close()
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logging.info("Bot dimatikan secara manual.")
-    
+        logging.info("ℹ️ Bot dimatikan secara manual.")
+        
