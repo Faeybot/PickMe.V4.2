@@ -30,10 +30,31 @@ class User(Base):
 
 class DatabaseService:
     def __init__(self, db_url):
+        # 1. KONVERSI KE ASYNCPG
         if db_url.startswith("postgresql://"):
             db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-        self.engine = create_async_engine(db_url, echo=False)
-        self.async_session = sessionmaker(self.engine, expire_on_commit=False, class_=AsyncSession)
+        
+        # 2. FIX SSL MODE (Mengatasi Timeout Railway)
+        if "sslmode" not in db_url:
+            db_url += "?sslmode=prefer"
+
+        # 3. ENGINE OPTIMIZATION
+        self.engine = create_async_engine(
+            db_url, 
+            echo=False,
+            pool_pre_ping=True,  # Memastikan koneksi tidak 'mati' di tengah jalan
+            connect_args={
+                "command_timeout": 60,  # Beri waktu 60 detik untuk koneksi
+                "server_settings": {
+                    "jit": "off"        # Menghemat RAM di Railway
+                }
+            }
+        )
+        self.async_session = sessionmaker(
+            self.engine, 
+            expire_on_commit=False, 
+            class_=AsyncSession
+        )
 
     async def init_db(self):
         async with self.engine.begin() as conn:
@@ -86,7 +107,6 @@ class DatabaseService:
     # LOGIKA SWIPE DATING
     async def get_potential_match(self, user_id: int, interest: str):
         async with self.async_session() as session:
-            # Cari user yang gendernya sesuai interest kita, dan bukan diri sendiri
             query = select(User).where(
                 User.id != user_id,
                 User.status == 'active'
@@ -95,7 +115,6 @@ class DatabaseService:
             if interest != "Keduanya":
                 query = query.where(User.gender == interest)
             
-            # Ambil satu secara acak (Random)
             result = await session.execute(query.order_by(func.random()).limit(1))
             return result.scalar_one_or_none()
-  
+        
