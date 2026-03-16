@@ -33,7 +33,6 @@ async def process_feed_input(message: types.Message, state: FSMContext, db: Data
     user = await db.get_user(message.from_user.id)
     is_photo = bool(message.photo)
     
-    # Validasi Kuota
     if is_photo and not user.is_premium and user.photo_posts_today >= 1:
         return await message.answer("⚠️ Kuota foto harianmu sudah habis!")
     if not is_photo and not user.is_premium and user.text_posts_today >= 3:
@@ -60,31 +59,29 @@ async def finalize_feed_post(callback: types.CallbackQuery, state: FSMContext, d
     bot_user = os.getenv("BOT_USERNAME")
     channel_id = os.getenv("FEED_CHANNEL_ID")
     
-    # --- LOGIKA VISUAL BARIS 1 (NAMA & LINK) ---
+    # --- BARIS 1: NAMA & LINK ---
     symbol = "👨" if user.gender == "pria" else "👩"
     link_text = "[👤 View Profile]"
     
     if is_anon:
         display_name = "ANONYMOUS USER"
         header = f"<b>👤 {display_name}</b>"
-        # Hitung panjang garis untuk anonim (Symbol + Space + Name)
         line_len = len(display_name) + 3
     else:
         full_name_up = user.full_name.upper()
         profile_url = f"https://t.me/{bot_user}?start=view_{user.id}"
         header = f"{symbol} <b>{full_name_up}</b> <a href='{profile_url}'>{link_text}</a>"
-        # Hitung panjang garis: Emoji(2) + Spasi(1) + Nama + Spasi(1) + LinkText
         line_len = len(full_name_up) + len(link_text) + 4
 
-    # --- LOGIKA BARIS 2 (GARIS DINAMIS) ---
-    # Menggunakan tanda "-" yang dibungkus <code> agar presisi
+    # --- BARIS 2: GARIS DINAMIS ---
     separator = f"<code>{'-' * line_len}</code>"
     
-    # --- LOGIKA BARIS 3 (ISI FEED) ---
+    # --- BARIS 3: ISI FEED (Monospace Italic) ---
     caption_clean = html.escape(data['f_caption'])
-    isi_feed = f"<code><i>{caption_clean}</i></code>"
+    # Kombinasi <i><code> seringkali lebih stabil miringnya di Telegram
+    isi_feed = f"<i><code>{caption_clean}</code></i>"
     
-    # --- PENGGABUNGAN STRUKTUR (Format 5 Baris) ---
+    # --- STRUKTUR AKHIR ---
     full_text = (
         f"{header}\n"         # Baris 1
         f"{separator}\n\n"    # Baris 2 & Spasi Kosong
@@ -93,7 +90,6 @@ async def finalize_feed_post(callback: types.CallbackQuery, state: FSMContext, d
     )
 
     try:
-        # Tanpa reply_markup agar kolom komentar otomatis muncul
         if data['f_type'] == "photo":
             await callback.bot.send_photo(
                 channel_id, 
@@ -111,9 +107,9 @@ async def finalize_feed_post(callback: types.CallbackQuery, state: FSMContext, d
             )
             await db.increment_quota(user.id, "text_post")
             
-        await callback.message.edit_text("✅ <b>Berhasil Terbit!</b>\nVisual garis sudah simetris dengan namamu.", parse_mode="HTML")
+        await callback.message.edit_text("✅ <b>Terbit!</b>\nTampilan Italic sudah diterapkan.", parse_mode="HTML")
     except Exception as e:
-        await callback.message.edit_text(f"❌ Gagal memposting: {e}")
+        await callback.message.edit_text(f"❌ Gagal: {e}")
     
     await state.clear()
     from handlers.start import show_main_menu
