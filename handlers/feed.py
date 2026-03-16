@@ -71,6 +71,7 @@ async def finalize_feed_post(callback: types.CallbackQuery, state: FSMContext, d
     
     full_text = f"{line1}\n{line2}\n{line3}\n{line4}\n{line5}"
     
+    # Tombol tunggal agar kolom komentar muncul
     kb = []
     if not is_anon:
         kb.append([InlineKeyboardButton(text="👤 Lihat Profil Lengkap", url=f"https://t.me/{bot_user}?start=view_{user.id}")])
