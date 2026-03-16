@@ -21,7 +21,7 @@ async def cmd_start(message: types.Message, db: DatabaseService, state: FSMConte
     user_id = message.from_user.id
     args = message.text.split()
     
-    # HANDLER VIEW PROFIL DENGAN FOTO TERKUNCI
+    # HANDLER VIEW PROFIL DARI CHANNEL
     if len(args) > 1 and args[1].startswith("view_"):
         target_id = int(args[1].replace("view_", ""))
         target = await db.get_user(target_id)
@@ -32,6 +32,7 @@ async def cmd_start(message: types.Message, db: DatabaseService, state: FSMConte
         if not target:
             return await message.answer("Profil tidak ditemukan.")
 
+        # Tampilkan Bio Saja (Foto Terkunci)
         text = (
             f"👤 **PROFIL: {target.full_name}**\n"
             f"━━━━━━━━━━━━━━━\n"
@@ -40,7 +41,7 @@ async def cmd_start(message: types.Message, db: DatabaseService, state: FSMConte
             f"📍 Lokasi: {target.location_name}\n\n"
             f"📝 **Bio:**\n{target.bio}\n"
             f"━━━━━━━━━━━━━━━\n"
-            "📸 *Foto & Chat masih terkunci. Gunakan kuotamu:* "
+            "📸 *Foto & Chat terkunci. Gunakan kuotamu:* "
         )
         
         kb = [
@@ -52,23 +53,23 @@ async def cmd_start(message: types.Message, db: DatabaseService, state: FSMConte
         ]
         return await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-    # CEK JOIN & REGISTRASI
+    # CEK JOIN (Feature lama tetap dipertahankan)
     try:
         member_feed = await message.bot.get_chat_member(FEED_CHANNEL_ID, user_id)
         if member_feed.status in ["left", "kicked"]:
             kb = [[InlineKeyboardButton(text="📢 Join Channel", url=f"https://t.me/{CH_LINK}")],
                   [InlineKeyboardButton(text="✅ Sudah Join", callback_data="check_join")]]
-            return await message.answer("❌ **Akses Ditolak!**\nJoin channel dulu ya!", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+            return await message.answer("❌ Join channel dulu ya!", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     except: pass
 
     user = await db.get_user(user_id)
     if not user:
         kb = [[InlineKeyboardButton(text="📝 Daftar Sekarang", callback_data="start_register")]]
-        return await message.answer("👋 **Selamat Datang!** Yuk buat profil dulu.", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        return await message.answer("👋 Selamat Datang! Yuk buat profil dulu.", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     
     await show_main_menu(message)
 
-# SISTEM UNLOCK & KIRIM PESAN
+# SISTEM UNLOCK & NOTIFIKASI PESAN
 @router.callback_query(F.data.startswith("unl_"))
 async def process_unlock(callback: types.CallbackQuery, state: FSMContext, db: DatabaseService):
     action, target_id = callback.data.split("_")[1], int(callback.data.split("_")[2])
@@ -86,7 +87,7 @@ async def process_unlock(callback: types.CallbackQuery, state: FSMContext, db: D
         if me.messages_sent_today >= 3 and not me.is_premium:
             return await callback.answer("❌ Kuota Chat habis!", show_alert=True)
         await state.update_data(chat_target_id=target.id)
-        await callback.message.answer(f"💌 **Kirim Pesan ke {target.full_name}**\n\nSilakan tulis pesanmu di bawah ini. Pesan dikirim melalui bot.")
+        await callback.message.answer(f"💌 **Kirim Pesan ke {target.full_name}**\n\nTulis pesanmu di bawah ini:")
         await state.set_state(ChatState.waiting_for_message)
         await callback.answer()
 
@@ -149,3 +150,4 @@ async def view_my_profile(callback: types.CallbackQuery, db: DatabaseService):
 @router.callback_query(F.data == "main_menu")
 async def back_to_menu(callback: types.CallbackQuery):
     await show_main_menu(callback.message)
+    
