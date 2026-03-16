@@ -33,6 +33,7 @@ async def process_feed_input(message: types.Message, state: FSMContext, db: Data
     user = await db.get_user(message.from_user.id)
     is_photo = bool(message.photo)
     
+    # Validasi Kuota
     if is_photo and not user.is_premium and user.photo_posts_today >= 1:
         return await message.answer("⚠️ Kuota foto harianmu sudah habis!")
     if not is_photo and not user.is_premium and user.text_posts_today >= 3:
@@ -59,28 +60,40 @@ async def finalize_feed_post(callback: types.CallbackQuery, state: FSMContext, d
     bot_user = os.getenv("BOT_USERNAME")
     channel_id = os.getenv("FEED_CHANNEL_ID")
     
-    # --- VISUAL NAMA: MONOSPACE BOLD + SHORTCUT LINK ---
+    # --- LOGIKA VISUAL BARIS 1 (NAMA & LINK) ---
     symbol = "👨" if user.gender == "pria" else "👩"
+    link_text = "[👤 View Profile]"
     
     if is_anon:
-        header = "<b>👤 <code>ANONYMOUS</code></b>"
+        display_name = "ANONYMOUS USER"
+        header = f"<b>👤 {display_name}</b>"
+        # Hitung panjang garis untuk anonim (Symbol + Space + Name)
+        line_len = len(display_name) + 3
     else:
-        # Nama Kapital + Monospace (<code>) + Shortcut Link [🔗]
+        full_name_up = user.full_name.upper()
         profile_url = f"https://t.me/{bot_user}?start=view_{user.id}"
-        header = f"{symbol} <b><code>{user.full_name.upper()}</code></b> <a href='{profile_url}'>[🔗]</a>"
+        header = f"{symbol} <b>{full_name_up}</b> <a href='{profile_url}'>{link_text}</a>"
+        # Hitung panjang garis: Emoji(2) + Spasi(1) + Nama + Spasi(1) + LinkText
+        line_len = len(full_name_up) + len(link_text) + 4
+
+    # --- LOGIKA BARIS 2 (GARIS DINAMIS) ---
+    # Menggunakan tanda "-" yang dibungkus <code> agar presisi
+    separator = f"<code>{'-' * line_len}</code>"
     
-    # Baris 3 & 4 (Isi Pesan)
+    # --- LOGIKA BARIS 3 (ISI FEED) ---
     caption_clean = html.escape(data['f_caption'])
+    isi_feed = f"<code><i>{caption_clean}</i></code>"
     
-    # Struktur 5 Baris Final
+    # --- PENGGABUNGAN STRUKTUR (Format 5 Baris) ---
     full_text = (
-        f"{header}\n\n"
-        f"{caption_clean}\n\n"
-        f"#{user.gender} #{user.city_hashtag.replace('#','')} #PickMeFeed"
+        f"{header}\n"         # Baris 1
+        f"{separator}\n\n"    # Baris 2 & Spasi Kosong
+        f"{isi_feed}\n\n"      # Baris 3 & Spasi Kosong
+        f"#{user.gender} #{user.city_hashtag.replace('#','')} #PickMeFeed" # Baris 5
     )
 
     try:
-        # KIRIM TANPA reply_markup (PENTING: Agar tombol komentar muncul otomatis)
+        # Tanpa reply_markup agar kolom komentar otomatis muncul
         if data['f_type'] == "photo":
             await callback.bot.send_photo(
                 channel_id, 
@@ -98,7 +111,7 @@ async def finalize_feed_post(callback: types.CallbackQuery, state: FSMContext, d
             )
             await db.increment_quota(user.id, "text_post")
             
-        await callback.message.edit_text("✅ <b>Berhasil Terbit!</b>\nCek kolom komentar di channel sekarang.", parse_mode="HTML")
+        await callback.message.edit_text("✅ <b>Berhasil Terbit!</b>\nVisual garis sudah simetris dengan namamu.", parse_mode="HTML")
     except Exception as e:
         await callback.message.edit_text(f"❌ Gagal memposting: {e}")
     
